@@ -961,7 +961,7 @@
 
           ${repasoHtml}
 
-          <!-- MOTIVO Y FOTO DE EVIDENCIA -->
+          <!-- MOTIVO Y FOTO DE EVIDENCIA CON OPCIÓN DE BORRAR -->
           <div class="bg-white p-2.5 rounded-lg border space-y-2 mt-2">
             <div class="flex gap-2 items-center">
               <select id="obsSelect_${originalIndex}" onchange="updateClientObs(${originalIndex}, this.value)" class="w-full text-xs font-semibold border rounded-lg px-2 py-1 bg-gray-50 outline-none">
@@ -974,13 +974,20 @@
               </select>
             </div>
 
-            <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
               <label for="cameraInput_${originalIndex}" class="cursor-pointer px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition">
                 <i class="fa-solid fa-camera text-indigo-600"></i> ${c.photo ? '📷 Cambiar Foto' : '📷 Tomar Foto Boleta/Local'}
               </label>
               <input type="file" id="cameraInput_${originalIndex}" accept="image/*" capture="environment" onchange="uploadPhotoEvidence(${originalIndex}, this)" class="hidden">
               
-              ${c.photo ? `<button onclick="openPhotoModal('${c.photo}', '${c.name}', '${c.obs || ''}')" class="text-xs text-emerald-700 font-extrabold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">Ver Foto ✅</button>` : '<span class="text-[10px] text-gray-400">Sin foto</span>'}
+              ${c.photo ? `
+                <div class="flex items-center gap-1">
+                  <button onclick="openPhotoModal('${c.photo}', '${c.name}', '${c.obs || ''}')" class="text-xs text-emerald-700 font-extrabold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">Ver Foto ✅</button>
+                  <button onclick="deletePhotoEvidence(${originalIndex})" class="text-xs text-rose-700 font-extrabold bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg hover:bg-rose-100 flex items-center gap-1" title="Borrar foto">
+                    <i class="fa-solid fa-trash-can"></i> Borrar
+                  </button>
+                </div>
+              ` : '<span class="text-[10px] text-gray-400">Sin foto</span>'}
             </div>
           </div>
 
@@ -1072,7 +1079,6 @@
       });
     }
 
-    // COMPRESIÓN Y CARGA DE FOTO DE EVIDENCIA
     function uploadPhotoEvidence(index, input) {
       if (!input.files || !input.files[0]) return;
 
@@ -1083,7 +1089,7 @@
         const img = new Image();
         img.onload = async () => {
           const canvas = document.createElement('canvas');
-          const maxDim = 600; // Redimensionar imagen para optimizar Firestore
+          const maxDim = 600;
           let width = img.width;
           let height = img.height;
 
@@ -1110,6 +1116,19 @@
         img.src = e.target.result;
       };
       reader.readAsDataURL(file);
+    }
+
+    // ELIMINAR FOTO DE EVIDENCIA
+    async function deletePhotoEvidence(index) {
+      if (!currentDocId || !currentClientsData[index]) return;
+      if (!confirm("¿Estás seguro de borrar la foto de evidencia de este cliente?")) return;
+
+      currentClientsData[index].photo = '';
+
+      await db.collection('routes').doc(currentDocId).update({
+        clients: currentClientsData,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
     }
 
     function openPhotoModal(imgSrc, title, obs) {
