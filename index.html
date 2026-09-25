@@ -362,6 +362,54 @@
       'REPASO': '#3B82F6'
     };
 
+    // FUNCIÓN DE CREACIÓN DE MAPAS ULTRA-OPTIMIZADOS CON VARIOS PROVEEDORES
+    function createOptimizedMap(containerId) {
+      // 1. CARTO VOYAGER (Ultra Rápido y Optimizado para Logística)
+      const cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        updateWhenIdle: true,
+        keepBuffer: 3
+      });
+
+      // 2. CARTO POSITRON (Modo Claro/Mínimo Consumo)
+      const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        updateWhenIdle: true,
+        keepBuffer: 3
+      });
+
+      // 3. ESRI SATÉLITE (Foto aérea)
+      const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        updateWhenIdle: true,
+        keepBuffer: 2
+      });
+
+      // 4. OPENSTREETMAP (Estándar)
+      const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        updateWhenIdle: true
+      });
+
+      const map = L.map(containerId, {
+        preferCanvas: true,          // Usa aceleración por GPU
+        markerZoomAnimation: false,  // Quita animaciones pesadas
+        layers: [cartoVoyager]        // Por defecto usa Carto Voyager
+      }).setView([-16.3988, -71.5350], 13);
+
+      // Agrega el control en la esquina superior derecha para cambiar de mapa al gusto
+      L.control.layers({
+        "🚀 Rápido (Carto Voyager)": cartoVoyager,
+        "⚪ Claro (Carto Positron)": cartoPositron,
+        "🛰️ Satélite (Esri)": esriSatellite,
+        "🗺️ Estándar (OSM)": osmStandard
+      }).addTo(map);
+
+      return map;
+    }
+
     function createCustomMarkerIcon(sec, status, showLabel = true) {
       const statusColor = STATUS_COLORS[status] || STATUS_COLORS['PENDIENTE'];
 
@@ -421,7 +469,7 @@
 
     let driverMap = null;
     let driverMapMarkers = {};
-    let driverSelfMarker = null; // MARCADOR DE UBICACIÓN EN VIVO DEL CHOFER
+    let driverSelfMarker = null;
     let driverMapInitialFit = false;
     let adminMapInitialFit = false;
 
@@ -487,8 +535,7 @@
       if (tab === 'admin') {
         setTimeout(async () => {
           if (!adminMap) {
-            adminMap = L.map('adminMap', { preferCanvas: true, markerZoomAnimation: false }).setView([-16.3988, -71.5350], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(adminMap);
+            adminMap = createOptimizedMap('adminMap');
           }
           adminMap.invalidateSize();
           await loadAvailableRoutesInSelect();
@@ -709,8 +756,7 @@
       document.getElementById('driverRouteTitle').innerText = `Ruta #${currentRouteCode}`;
 
       if (!driverMap) {
-        driverMap = L.map('driverMap', { preferCanvas: true, markerZoomAnimation: false }).setView([-16.3988, -71.5350], 13);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(driverMap);
+        driverMap = createOptimizedMap('driverMap');
       }
       setTimeout(() => driverMap.invalidateSize(), 150);
 
