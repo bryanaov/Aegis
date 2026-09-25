@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- FontAwesome Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
   <!-- Leaflet Map CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -362,63 +363,53 @@
       'REPASO': '#3B82F6'
     };
 
-    // FUNCIÓN DE CREACIÓN DE MAPAS ULTRA-OPTIMIZADOS CON VARIOS PROVEEDORES
+    // MAPA ULTRA-LIVIANO (Sin relleno de vegetación ni terrenos pesados)
     function createOptimizedMap(containerId) {
-      // 1. CARTO VOYAGER (Ultra Rápido y Optimizado para Logística)
-      const cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd',
-        updateWhenIdle: true,
-        keepBuffer: 3
-      });
-
-      // 2. CARTO POSITRON (Modo Claro/Mínimo Consumo)
       const cartoPositron = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
         maxZoom: 19,
         subdomains: 'abcd',
         updateWhenIdle: true,
-        keepBuffer: 3
+        keepBuffer: 2
       });
 
-      // 3. ESRI SATÉLITE (Foto aérea)
+      const cartoVoyager = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19,
+        subdomains: 'abcd',
+        updateWhenIdle: true,
+        keepBuffer: 2
+      });
+
       const esriSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
         maxZoom: 19,
         updateWhenIdle: true,
         keepBuffer: 2
       });
 
-      // 4. OPENSTREETMAP (Estándar)
-      const osmStandard = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        updateWhenIdle: true
-      });
-
       const map = L.map(containerId, {
-        preferCanvas: true,          // Usa aceleración por GPU
-        markerZoomAnimation: false,  // Quita animaciones pesadas
-        layers: [cartoVoyager]        // Por defecto usa Carto Voyager
+        preferCanvas: true,          // Renders via GPU
+        markerZoomAnimation: false,  // Sin animaciones pesadas
+        layers: [cartoPositron]      // Positron (plano, minimalista)
       }).setView([-16.3988, -71.5350], 13);
 
-      // Agrega el control en la esquina superior derecha para cambiar de mapa al gusto
       L.control.layers({
-        "🚀 Rápido (Carto Voyager)": cartoVoyager,
-        "⚪ Claro (Carto Positron)": cartoPositron,
-        "🛰️ Satélite (Esri)": esriSatellite,
-        "🗺️ Estándar (OSM)": osmStandard
+        "⚪ Minimalista (Sin relleno)": cartoPositron,
+        "🚀 Logístico (Voyager)": cartoVoyager,
+        "🛰️ Satélite (Esri)": esriSatellite
       }).addTo(map);
 
       return map;
     }
 
+    // ICONOS INDIVIDUALES: Muestra solo punto si está alejado, número cuando te acercas
     function createCustomMarkerIcon(sec, status, showLabel = true) {
       const statusColor = STATUS_COLORS[status] || STATUS_COLORS['PENDIENTE'];
 
       if (!showLabel) {
         return L.divIcon({
           className: 'custom-map-marker',
-          html: `<div style="width:10px;height:10px;border-radius:50%;background-color:${statusColor};border:1.5px solid #ffffff;"></div>`,
-          iconSize: [10, 10],
-          iconAnchor: [5, 5]
+          html: `<div style="width:8px;height:8px;border-radius:50%;background-color:${statusColor};border:1px solid #ffffff;"></div>`,
+          iconSize: [8, 8],
+          iconAnchor: [4, 4]
         });
       }
 
@@ -427,28 +418,28 @@
         html: `
           <div style="display: flex; align-items: center; gap: 2px; pointer-events: auto;">
             <div style="
-              width: 12px; 
-              height: 12px; 
+              width: 10px; 
+              height: 10px; 
               border-radius: 50%; 
               background-color: ${statusColor}; 
-              border: 1.5px solid #ffffff; 
+              border: 1px solid #ffffff; 
               flex-shrink: 0;
             "></div>
             <span style="
-              background: rgba(255,255,255,0.92); 
+              background: rgba(255,255,255,0.95); 
               color: #1f2937; 
               font-weight: 700; 
               font-size: 9px; 
               padding: 0px 3px; 
               border-radius: 3px; 
-              border: 1px solid #e5e7eb;
+              border: 1px solid #d1d5db;
               white-space: nowrap;
               line-height: 12px;
             ">${sec}</span>
           </div>
         `,
-        iconSize: [38, 14],
-        iconAnchor: [6, 7]
+        iconSize: [35, 12],
+        iconAnchor: [5, 6]
       });
     }
 
@@ -536,6 +527,11 @@
         setTimeout(async () => {
           if (!adminMap) {
             adminMap = createOptimizedMap('adminMap');
+            adminMap.on('zoomend', () => {
+              const code = document.getElementById('selectAdminRoute').value;
+              if (code) onAdminRouteSelect(false);
+              else loadAdminGeneralSummary();
+            });
           }
           adminMap.invalidateSize();
           await loadAvailableRoutesInSelect();
@@ -757,6 +753,7 @@
 
       if (!driverMap) {
         driverMap = createOptimizedMap('driverMap');
+        driverMap.on('zoomend', () => applyDriverFilters());
       }
       setTimeout(() => driverMap.invalidateSize(), 150);
 
@@ -946,6 +943,8 @@
       const bounds = [];
       const currentKeys = new Set();
 
+      const showLabels = driverMap ? (driverMap.getZoom() >= 14) : true;
+
       document.getElementById('driverResultsCount').innerText = `${clientsToRender.length} de ${currentClientsData.length} clientes`;
 
       clientsToRender.forEach((c) => {
@@ -1008,7 +1007,7 @@
         listContainer.appendChild(card);
 
         if (c.lat && c.lon) {
-          const markerIcon = createCustomMarkerIcon(c.sec, statusKey, true);
+          const markerIcon = createCustomMarkerIcon(c.sec, statusKey, showLabels);
           
           if (!driverMapMarkers[uniqueKey]) {
             const marker = L.marker([c.lat, c.lon], { icon: markerIcon }).addTo(driverMap);
@@ -1111,9 +1110,11 @@
       }
     }
 
-    function renderAdminMapPoints(clients, showLabels = true) {
+    function renderAdminMapPoints(clients, forceLabels = null) {
       const bounds = [];
       const currentKeys = new Set();
+
+      const showLabels = forceLabels !== null ? forceLabels : (adminMap ? (adminMap.getZoom() >= 14) : true);
 
       clients.forEach(c => {
         if (!c.lat || !c.lon) return;
@@ -1209,7 +1210,7 @@
         const selectedVal = document.getElementById('selectAdminRoute').value;
         if (!selectedVal) {
           updateAdminSummaryStats(allClients, "General Día");
-          renderAdminMapPoints(allClients, false);
+          renderAdminMapPoints(allClients);
           renderAdminClientsTable(allClients);
         }
       });
@@ -1275,7 +1276,7 @@
         const clients = doc.data().clients || [];
 
         updateAdminSummaryStats(clients, `Ruta #${code}`);
-        renderAdminMapPoints(clients, true);
+        renderAdminMapPoints(clients);
         renderAdminClientsTable(clients);
       });
     }
