@@ -1,0 +1,1238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Seguimiento de Rutas - Courier</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- Leaflet Map CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Firebase JS SDK (Compat Mode) -->
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    .map-container { height: 380px; width: 100%; border-radius: 12px; }
+    .status-badge { padding: 4px 8px; border-radius: 6px; font-weight: bold; font-size: 11px; }
+    .status-PENDIENTE { background-color: #E5E7EB; color: #374151; }
+    .status-ENTREGADO { background-color: #BBF7D0; color: #166534; }
+    .status-CERRADO { background-color: #FECACA; color: #991B1B; }
+    .status-PARCIAL { background-color: #FFEDD5; color: #9A3412; }
+    .status-OTRO_MOTIVO { background-color: #F3E8FF; color: #6B21A8; }
+    .status-REPASO { background-color: #DBEAFE; color: #1E40AF; }
+    
+    .custom-map-marker { background: none; border: none; }
+
+    /* Animación del GPS en vivo del chofer */
+    @keyframes pulseDriverDot {
+      0% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+      70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(37, 99, 235, 0); }
+      100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+    }
+    .driver-self-marker {
+      width: 16px;
+      height: 16px;
+      background-color: #2563EB;
+      border: 2px solid #FFFFFF;
+      border-radius: 50%;
+      animation: pulseDriverDot 2s infinite;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800">
+
+  <!-- ENCABEZADO -->
+  <header class="bg-indigo-700 text-white p-4 shadow-md sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto flex justify-between items-center">
+      <h1 class="text-xl font-bold flex items-center gap-2">
+        <i class="fa-solid fa-truck-fast"></i> Courier Tracker
+      </h1>
+      <div class="flex gap-2">
+        <button onclick="switchTab('driver')" id="btnTabDriver" class="px-3 py-1.5 rounded-lg bg-indigo-900 text-white text-sm font-semibold hover:bg-indigo-800">
+          <i class="fa-solid fa-mobile-screen"></i> Modo Chofer
+        </button>
+        <button onclick="requestAdminAccess()" id="btnTabAdmin" class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-500">
+          <i class="fa-solid fa-lock"></i> Vista Admin
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto p-4 space-y-4">
+
+    <!-- VISTA CHOFER (MÓVIL) -->
+    <section id="viewDriver" class="block space-y-4">
+      <div id="driverLoginCard" class="bg-white p-5 rounded-xl shadow space-y-3">
+        <h2 class="text-lg font-bold flex items-center gap-2 text-indigo-700">
+          <i class="fa-solid fa-id-card"></i> Acceso a Ruta de Reparto
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <input type="text" id="inputRouteCode" placeholder="Código (ej: 14 o T14)" class="border rounded-lg px-3 py-2 text-base uppercase font-bold text-gray-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+          <input type="password" id="inputRoutePin" maxlength="6" placeholder="Clave de Ruta (PIN)" class="border rounded-lg px-3 py-2 text-base font-bold text-gray-700 focus:ring-2 focus:ring-indigo-500 outline-none">
+          <button onclick="loadDriverRoute()" class="bg-indigo-600 text-white px-5 py-2 rounded-lg font-bold hover:bg-indigo-700 transition">
+            Ingresar a Ruta
+          </button>
+        </div>
+        <div class="flex items-center gap-2 pt-1 text-xs text-gray-600">
+          <input type="checkbox" id="chkRememberDriver" checked class="w-4 h-4 text-indigo-600 rounded">
+          <label for="chkRememberDriver" class="font-semibold cursor-pointer">Recordar mis datos en este celular (Auto-ingreso)</label>
+        </div>
+      </div>
+
+      <!-- PANEL DE RUTA CARGADA -->
+      <div id="driverRouteContainer" class="hidden space-y-4">
+        <!-- CABECERA GPS & STATUS -->
+        <div class="bg-white p-4 rounded-xl shadow flex flex-col md:flex-row justify-between items-center gap-3">
+          <div>
+            <h3 class="font-bold text-gray-800 text-lg" id="driverRouteTitle">Ruta #</h3>
+            <p class="text-xs text-emerald-600 font-bold" id="driverSubtitle">📡 Transmisión GPS activada automáticamente</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <div id="gpsStatusBadge" class="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-bold flex items-center gap-2 shadow-sm">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span> GPS En Vivo Transmitiendo
+            </div>
+            <button onclick="logoutDriverSession()" class="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-rose-50 hover:text-rose-600 font-bold text-xs rounded-lg border transition flex items-center gap-1">
+              <i class="fa-solid fa-right-from-bracket"></i> Salir
+            </button>
+          </div>
+        </div>
+
+        <!-- RESUMEN DE PROGRESO CHOFER -->
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+          <div class="flex justify-between items-center border-b pb-2">
+            <h4 class="font-bold text-gray-700 text-sm flex items-center gap-2">
+              <i class="fa-solid fa-chart-pie text-indigo-600"></i> Resumen y Avance de Ruta
+            </h4>
+            <span id="driverProgressPct" class="text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full">0% completado</span>
+          </div>
+
+          <div class="space-y-1">
+            <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden flex">
+              <div id="driverProgressBarFill" class="bg-emerald-500 h-3 transition-all duration-500" style="width: 0%"></div>
+            </div>
+            <div class="flex justify-between text-[11px] font-bold text-gray-500">
+              <span id="driverCompletedCount">Visitados: 0</span>
+              <span id="driverRemainingCount">Falta por visitar: 0 (100%)</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-center text-xs font-bold pt-1">
+            <div class="bg-gray-100 p-2 rounded-lg border">
+              <span class="block text-gray-500 text-[10px]">⏳ PENDIENTES</span>
+              <span id="driverCountPendiente" class="text-base text-gray-800">0</span>
+            </div>
+            <div class="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+              <span class="block text-emerald-600 text-[10px]">✅ ENTREGADOS</span>
+              <span id="driverCountEntregado" class="text-base text-emerald-700">0</span>
+            </div>
+            <div class="bg-rose-50 p-2 rounded-lg border border-rose-200">
+              <span class="block text-rose-600 text-[10px]">❌ CERRADOS</span>
+              <span id="driverCountCerrado" class="text-base text-rose-700">0</span>
+            </div>
+            <div class="bg-orange-50 p-2 rounded-lg border border-orange-200">
+              <span class="block text-orange-600 text-[10px]">🟧 PARCIAL</span>
+              <span id="driverCountParcial" class="text-base text-orange-700">0</span>
+            </div>
+            <div class="bg-purple-50 p-2 rounded-lg border border-purple-200">
+              <span class="block text-purple-600 text-[10px]">🟣 OTRO MOTIVO</span>
+              <span id="driverCountOtro" class="text-base text-purple-700">0</span>
+            </div>
+            <div class="bg-blue-50 p-2 rounded-lg border border-blue-200">
+              <span class="block text-blue-600 text-[10px]">🔵 REPASO</span>
+              <span id="driverCountRepaso" class="text-base text-blue-700">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- MAPA MÓVIL CHOFER -->
+        <div class="bg-white p-3 rounded-xl shadow space-y-2">
+          <h4 class="font-bold text-gray-700 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-map-pinned text-indigo-600"></i> Mapa de Ruta (Punto azul = Tu Ubicación)
+          </h4>
+          <div id="driverMap" class="map-container"></div>
+        </div>
+
+        <!-- BÚSQUEDA Y FILTRADO -->
+        <div class="bg-white p-4 rounded-xl shadow space-y-3">
+          <h4 class="font-bold text-gray-700 text-sm flex items-center gap-2 border-b pb-2">
+            <i class="fa-solid fa-filter text-indigo-600"></i> Buscar o Filtrar Clientes
+          </h4>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label class="text-xs font-bold text-gray-500">Buscar por Código / Nombre / Dirección:</label>
+              <div class="relative mt-1">
+                <input type="text" id="driverSearchInput" oninput="applyDriverFilters()" placeholder="Ej: 201475 o Sucre..." class="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500">
+                <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2.5 text-gray-400 text-xs"></i>
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-bold text-gray-500">Filtrar por Vendedor:</label>
+              <select id="driverVendorFilter" onchange="applyDriverFilters()" class="w-full border rounded-lg px-3 py-1.5 text-sm font-bold text-gray-700 outline-none mt-1">
+                <option value="">-- Todos los Vendedores --</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- LISTA DE CLIENTES CHOFER -->
+        <div class="bg-white p-4 rounded-xl shadow">
+          <div class="flex justify-between items-center mb-3 border-b pb-2">
+            <h4 class="font-bold text-gray-700">Clientes en la Ruta</h4>
+            <span id="driverResultsCount" class="text-xs font-bold bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full">---</span>
+          </div>
+          <div id="driverClientsList" class="space-y-3"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- VISTA ADMINISTRADOR -->
+    <section id="viewAdmin" class="hidden space-y-4">
+
+      <!-- TARJETA DE ARCHIVO ACTIVO -->
+      <div id="activeFileCard" class="hidden bg-emerald-50 border border-emerald-300 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm">
+        <div class="space-y-0.5">
+          <div class="flex items-center gap-2">
+            <span class="bg-emerald-600 text-white text-[10px] font-extrabold uppercase px-2 py-0.5 rounded">Archivo Activo</span>
+            <h4 id="activeFileName" class="font-bold text-emerald-900 text-base">---</h4>
+          </div>
+          <p id="activeFileMeta" class="text-xs text-emerald-700 font-medium">---</p>
+        </div>
+        <button onclick="clearCurrentDayData()" class="w-full sm:w-auto px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg shadow flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-trash-can"></i> Borrar datos para nuevo día
+        </button>
+      </div>
+
+      <!-- CARGAR NUEVO ARCHIVO -->
+      <div class="bg-white p-5 rounded-xl shadow space-y-3">
+        <h2 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+          <i class="fa-solid fa-file-csv text-emerald-600"></i> Cargar Archivo de Rutas (CSV)
+        </h2>
+        <p class="text-xs text-gray-500">
+          Soporta separadores <code>;</code> o <code>,</code>. Mapea columnas <b>TPT</b>, <b>SEC</b>, <b>RAZON SOCIAL</b>, <b>Y (Lat)</b>, <b>X (Lon)</b>.
+        </p>
+        <div class="flex flex-col sm:flex-row gap-3 items-center">
+          <input type="file" id="inputCsvFile" accept=".csv, .txt" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+          <button onclick="processAndUploadCSV()" class="w-full sm:w-auto px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 shadow whitespace-nowrap">
+            Procesar y Guardar
+          </button>
+        </div>
+        <div id="csvStatus" class="text-sm font-medium"></div>
+      </div>
+
+      <!-- PANEL DE CLAVES ASIGNADAS -->
+      <div class="bg-white p-4 rounded-xl shadow space-y-2 border-l-4 border-amber-500">
+        <h3 class="font-bold text-gray-800 text-sm flex items-center gap-2">
+          <i class="fa-solid fa-key text-amber-500"></i> Claves de Acceso Asignadas a Choferes
+        </h3>
+        <p class="text-xs text-gray-500">Comparte este PIN con cada chofer para que puedan acceder solo a su ruta:</p>
+        <div id="routeKeysList" class="flex flex-wrap gap-2 text-xs font-bold pt-1">
+          <span class="text-gray-400 font-normal">Carga un CSV para generar las claves de cada chofer...</span>
+        </div>
+      </div>
+
+      <!-- RESUMEN Y AVANCE EN VISTA ADMIN -->
+      <div class="bg-white p-4 rounded-xl shadow space-y-3 border-l-4 border-indigo-600">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h4 class="font-bold text-gray-700 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-chart-pie text-indigo-600"></i> Resumen y Avance <span id="adminScopeLabel" class="text-xs text-indigo-600 font-bold">(General Día)</span>
+          </h4>
+          <span id="adminProgressPct" class="text-xs font-black text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full">0% completado</span>
+        </div>
+
+        <div class="space-y-1">
+          <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden flex">
+            <div id="adminProgressBarFill" class="bg-emerald-500 h-3 transition-all duration-500" style="width: 0%"></div>
+          </div>
+          <div class="flex justify-between text-[11px] font-bold text-gray-500">
+            <span id="adminCompletedCount">Visitados / Atendidos: 0</span>
+            <span id="adminRemainingCount">Falta por visitar (Gris): 0 (100%)</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-center text-xs font-bold pt-1">
+          <div class="bg-gray-100 p-2 rounded-lg border">
+            <span class="block text-gray-500 text-[10px]">⏳ PENDIENTES</span>
+            <span id="adminCountPendiente" class="text-base text-gray-800">0</span>
+          </div>
+          <div class="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
+            <span class="block text-emerald-600 text-[10px]">✅ ENTREGADOS</span>
+            <span id="adminCountEntregado" class="text-base text-emerald-700">0</span>
+          </div>
+          <div class="bg-rose-50 p-2 rounded-lg border border-rose-200">
+            <span class="block text-rose-600 text-[10px]">❌ CERRADOS</span>
+            <span id="adminCountCerrado" class="text-base text-rose-700">0</span>
+          </div>
+          <div class="bg-orange-50 p-2 rounded-lg border border-orange-200">
+            <span class="block text-orange-600 text-[10px]">🟧 PARCIAL</span>
+            <span id="adminCountParcial" class="text-base text-orange-700">0</span>
+          </div>
+          <div class="bg-purple-50 p-2 rounded-lg border border-purple-200">
+            <span class="block text-purple-600 text-[10px]">🟣 OTRO MOTIVO</span>
+            <span id="adminCountOtro" class="text-base text-purple-700">0</span>
+          </div>
+          <div class="bg-blue-50 p-2 rounded-lg border border-blue-200">
+            <span class="block text-blue-600 text-[10px]">🔵 REPASO</span>
+            <span id="adminCountRepaso" class="text-base text-blue-700">0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAPA MONITOREO ADMIN -->
+      <div class="bg-white p-4 rounded-xl shadow space-y-3">
+        <div class="flex flex-col sm:flex-row justify-between items-center gap-3">
+          <div class="flex items-center gap-2">
+            <h3 class="font-bold text-gray-800">Monitoreo General de Rutas</h3>
+            <span class="text-[11px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> GPS Multicamión Activo
+            </span>
+          </div>
+          <div class="flex items-center gap-2 w-full sm:w-auto">
+            <button onclick="manualRefreshAdmin()" class="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-bold rounded-lg border border-indigo-200 text-xs hover:bg-indigo-100 flex items-center gap-1.5 shadow-sm">
+              <i class="fa-solid fa-rotate"></i> Actualizar
+            </button>
+            <label class="text-xs font-bold text-gray-600">Filtrar Ruta:</label>
+            <select id="selectAdminRoute" onchange="onAdminRouteSelect(true)" class="border rounded-lg px-3 py-1.5 font-bold text-gray-700 outline-none w-full sm:w-auto">
+              <option value="">-- Todas las Rutas (Vista General) --</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="adminMap" class="map-container" style="height: 480px;"></div>
+      </div>
+
+      <!-- DETALLE DE ESTADOS DE CLIENTES ADMIN -->
+      <div id="adminClientsDetailCard" class="bg-white p-4 rounded-xl shadow space-y-3">
+        <div class="flex flex-col sm:flex-row justify-between items-center gap-2 border-b pb-2">
+          <h4 class="font-bold text-gray-800 text-sm flex items-center gap-2">
+            <i class="fa-solid fa-list-check text-indigo-600"></i> Estado Detallado de Clientes <span id="adminTableScope" class="text-xs text-indigo-600 font-bold">(General)</span>
+          </h4>
+          <input type="text" id="adminSearchInput" oninput="applyAdminTableFilter()" placeholder="Buscar cliente, sec o dirección..." class="border rounded-lg px-3 py-1.5 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500 w-full sm:w-64">
+        </div>
+        <div class="overflow-x-auto max-h-96">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="bg-gray-100 border-b text-gray-600 font-bold uppercase text-[10px]">
+                <th class="p-2">Ruta</th>
+                <th class="p-2">Sec</th>
+                <th class="p-2">Cliente / Razón Social</th>
+                <th class="p-2">Dirección</th>
+                <th class="p-2">Estado</th>
+                <th class="p-2">Hora Entrega</th>
+              </tr>
+            </thead>
+            <tbody id="adminClientsTableBody">
+              <tr><td colspan="6" class="text-center p-4 text-gray-400">Cargando lista de clientes...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <script>
+    let isAdminAuthenticated = false;
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyACnclacLssdaufRdZxoiBkmfCFfGdoZiE",
+      authDomain: "courier-4ecda.firebaseapp.com",
+      projectId: "courier-4ecda",
+      storageBucket: "courier-4ecda.firebasestorage.app",
+      messagingSenderId: "226032355815",
+      appId: "1:226032355815:web:0e7e78e217ca77363a1542",
+      measurementId: "G-899HW8W4XJ"
+    };
+
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    const STATUS_COLORS = {
+      'PENDIENTE': '#6B7280',
+      'ENTREGADO': '#22C55E',
+      'CERRADO': '#EF4444',
+      'PARCIAL': '#F97316',
+      'OTRO MOTIVO': '#A855F7',
+      'REPASO': '#3B82F6'
+    };
+
+    function createCustomMarkerIcon(sec, status, showLabel = true) {
+      const statusColor = STATUS_COLORS[status] || STATUS_COLORS['PENDIENTE'];
+
+      if (!showLabel) {
+        return L.divIcon({
+          className: 'custom-map-marker',
+          html: `<div style="width:10px;height:10px;border-radius:50%;background-color:${statusColor};border:1.5px solid #ffffff;"></div>`,
+          iconSize: [10, 10],
+          iconAnchor: [5, 5]
+        });
+      }
+
+      return L.divIcon({
+        className: 'custom-map-marker',
+        html: `
+          <div style="display: flex; align-items: center; gap: 2px; pointer-events: auto;">
+            <div style="
+              width: 12px; 
+              height: 12px; 
+              border-radius: 50%; 
+              background-color: ${statusColor}; 
+              border: 1.5px solid #ffffff; 
+              flex-shrink: 0;
+            "></div>
+            <span style="
+              background: rgba(255,255,255,0.92); 
+              color: #1f2937; 
+              font-weight: 700; 
+              font-size: 9px; 
+              padding: 0px 3px; 
+              border-radius: 3px; 
+              border: 1px solid #e5e7eb;
+              white-space: nowrap;
+              line-height: 12px;
+            ">${sec}</span>
+          </div>
+        `,
+        iconSize: [38, 14],
+        iconAnchor: [6, 7]
+      });
+    }
+
+    let currentRouteCode = null;
+    let currentDocId = null;
+    let currentClientsData = [];
+    let driverUnsubscribe = null;
+    let gpsWatchId = null;
+    let lastGpsSentTime = 0;
+
+    let adminMap = null;
+    let adminMapMarkers = {};
+    let allTruckMarkers = {};
+    let adminGlobalTrackingUnsubscribe = null;
+    let adminRouteUnsubscribe = null;
+    let adminAllRoutesUnsubscribe = null;
+    let adminCurrentRawClients = [];
+
+    let driverMap = null;
+    let driverMapMarkers = {};
+    let driverSelfMarker = null; // MARCADOR DE UBICACIÓN EN VIVO DEL CHOFER
+    let driverMapInitialFit = false;
+    let adminMapInitialFit = false;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const savedCode = localStorage.getItem('courier_driver_code');
+      const savedPin = localStorage.getItem('courier_driver_pin');
+      if (savedCode && savedPin) {
+        document.getElementById('inputRouteCode').value = savedCode;
+        document.getElementById('inputRoutePin').value = savedPin;
+        loadDriverRoute();
+      }
+    });
+
+    async function requestAdminAccess() {
+      if (isAdminAuthenticated) {
+        switchTab('admin');
+        return;
+      }
+      let storedPass = null;
+      try {
+        const doc = await db.collection('config').doc('admin').get();
+        if (doc.exists) storedPass = doc.data().password;
+      } catch (e) {
+        alert("No se pudo verificar la contraseña. Revisa tu conexión.");
+        return;
+      }
+
+      if (!storedPass) {
+        const newPass = prompt("🔒 Primera vez: crea una contraseña de Administrador (mín. 4 caracteres):");
+        if (newPass === null) return;
+        if (newPass.length < 4) { alert("La contraseña debe tener al menos 4 caracteres."); return; }
+        await db.collection('config').doc('admin').set({ password: newPass });
+        isAdminAuthenticated = true;
+        switchTab('admin');
+        return;
+      }
+
+      const pass = prompt("🔒 Ingrese la contraseña de Administrador:");
+      if (pass === storedPass) {
+        isAdminAuthenticated = true;
+        switchTab('admin');
+      } else if (pass !== null) {
+        alert("❌ Contraseña incorrecta.");
+      }
+    }
+
+    db.collection('meta').doc('active_file').onSnapshot(doc => {
+      const card = document.getElementById('activeFileCard');
+      if (doc && doc.exists) {
+        const data = doc.data();
+        document.getElementById('activeFileName').innerText = data.fileName || 'Archivo cargado';
+        document.getElementById('activeFileMeta').innerText = `Subido el ${data.uploadDate || ''} · ${data.totalClients || 0} clientes en ${data.totalRoutes || 0} rutas.`;
+        card.classList.remove('hidden');
+      } else {
+        card.classList.add('hidden');
+      }
+    });
+
+    function switchTab(tab) {
+      document.getElementById('viewDriver').classList.toggle('hidden', tab !== 'driver');
+      document.getElementById('viewAdmin').classList.toggle('hidden', tab !== 'admin');
+      
+      if (tab === 'admin') {
+        setTimeout(async () => {
+          if (!adminMap) {
+            adminMap = L.map('adminMap', { preferCanvas: true, markerZoomAnimation: false }).setView([-16.3988, -71.5350], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(adminMap);
+          }
+          adminMap.invalidateSize();
+          await loadAvailableRoutesInSelect();
+          startAdminGlobalTracking();
+
+          const savedRoute = localStorage.getItem('courier_admin_selected_route');
+          const select = document.getElementById('selectAdminRoute');
+          if (savedRoute && select.querySelector(`option[value="${savedRoute}"]`)) {
+            select.value = savedRoute;
+            onAdminRouteSelect(true);
+          } else {
+            loadAdminGeneralSummary();
+          }
+        }, 100);
+      } else {
+        setTimeout(() => {
+          if (driverMap) driverMap.invalidateSize();
+        }, 100);
+      }
+    }
+
+    function parseCSV(text) {
+      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      if (lines.length === 0) return [];
+
+      const firstLine = lines[0];
+      let delimiter = ';';
+      if ((firstLine.match(/,/g) || []).length > (firstLine.match(/;/g) || []).length) delimiter = ',';
+
+      function parseRow(rowStr) {
+        const result = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < rowStr.length; i++) {
+          const char = rowStr[i];
+          if (char === '"') inQuotes = !inQuotes;
+          else if (char === delimiter && !inQuotes) { result.push(current.trim()); current = ''; }
+          else current += char;
+        }
+        result.push(current.trim());
+        return result;
+      }
+
+      const headers = parseRow(lines[0]).map(h => h.replace(/^[\uFEFF\s"']+|[\s"']+$/g, '').toUpperCase());
+      const getIndex = (names) => headers.findIndex(h => names.some(n => h === n || h.includes(n)));
+
+      const idxTpt = getIndex(['TPT', 'RUTA', 'CHOFER', 'CODIGO']);
+      const idxSec = getIndex(['SEC', 'SECUENCIA', 'ORDEN']);
+      const idxVend = getIndex(['VENDEDOR', 'VEND']);
+      const idxName = getIndex(['RAZON SOCIAL', 'NAME', 'CLIENTE']);
+      const idxTel = getIndex(['TELEFONO', 'TEL', 'CELULAR']);
+      const idxDom = getIndex(['DOMICILIO', 'DIRECCION']);
+      const idxSub = getIndex(['SUBTOTAL FINAL', 'SUBTOTAL', 'MONTO']);
+      const idxY = getIndex(['Y', 'LAT', 'LATITUD']);
+      const idxX = getIndex(['X', 'LON', 'LONGITUD']);
+      const idxEstado = getIndex(['ESTADO', 'STATUS']);
+
+      const clients = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseRow(lines[i]);
+        if (cols.length < 2) continue;
+
+        let tpt = idxTpt !== -1 ? cols[idxTpt] : 'DEFAULT';
+        if (!tpt) continue;
+
+        let lat = idxY !== -1 ? parseFloat(cols[idxY].replace(',', '.')) : 0;
+        let lon = idxX !== -1 ? parseFloat(cols[idxX].replace(',', '.')) : 0;
+
+        clients.push({
+          tpt: tpt.toString().trim(),
+          sec: idxSec !== -1 ? parseInt(cols[idxSec]) || i : i,
+          vendedor: idxVend !== -1 ? cols[idxVend].toString().trim() : '',
+          name: idxName !== -1 ? cols[idxName] : 'Cliente ' + i,
+          telefono: idxTel !== -1 ? cols[idxTel] : '',
+          domicilio: idxDom !== -1 ? cols[idxDom] : '',
+          subtotal: idxSub !== -1 ? cols[idxSub] : '0.00',
+          lat: isNaN(lat) ? 0 : lat,
+          lon: isNaN(lon) ? 0 : lon,
+          estado: (idxEstado !== -1 && cols[idxEstado]) ? cols[idxEstado].toUpperCase() : 'PENDIENTE',
+          repasoConfirm: '',
+          horaEntrega: ''
+        });
+      }
+      return clients;
+    }
+
+    async function processAndUploadCSV() {
+      const fileInput = document.getElementById('inputCsvFile');
+      const statusDiv = document.getElementById('csvStatus');
+
+      if (!fileInput.files || fileInput.files.length === 0) {
+        statusDiv.className = "text-sm font-bold text-red-600";
+        statusDiv.innerText = "Por favor selecciona un archivo .csv";
+        return;
+      }
+
+      statusDiv.className = "text-sm font-bold text-indigo-600";
+      statusDiv.innerText = "⏳ Procesando archivo y generando claves de seguridad...";
+
+      const file = fileInput.files[0];
+      const reader = new FileReader();
+
+      reader.onload = async (e) => {
+        try {
+          const parsedClients = parseCSV(e.target.result);
+          if (parsedClients.length === 0) {
+            statusDiv.className = "text-sm font-bold text-red-600";
+            statusDiv.innerText = "No se pudieron extraer datos del archivo.";
+            return;
+          }
+
+          const routesMap = {};
+          parsedClients.forEach(client => {
+            const rawCode = client.tpt;
+            if (!routesMap[rawCode]) routesMap[rawCode] = [];
+            routesMap[rawCode].push(client);
+          });
+
+          const routeKeys = Object.keys(routesMap);
+          for (const code of routeKeys) {
+            const group = routesMap[code];
+            group.sort((a, b) => a.sec - b.sec);
+
+            let hash = 0;
+            for (let i = 0; i < code.length; i++) hash = code.charCodeAt(i) + ((hash << 5) - hash);
+            const generatedPin = Math.abs(hash % 9000 + 1000).toString();
+
+            await db.collection('routes').doc(code).set({
+              code: code,
+              pin: generatedPin,
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              clients: group
+            }, { merge: true });
+          }
+
+          const nowStr = new Date().toLocaleString();
+          await db.collection('meta').doc('active_file').set({
+            fileName: file.name,
+            uploadDate: nowStr,
+            totalClients: parsedClients.length,
+            totalRoutes: routeKeys.length
+          });
+
+          statusDiv.className = "text-sm font-bold text-emerald-600";
+          statusDiv.innerText = `✅ ¡Éxito! Se guardaron ${parsedClients.length} clientes en las rutas (${routeKeys.join(', ')}).`;
+
+          fileInput.value = '';
+          await loadAvailableRoutesInSelect();
+          loadAdminGeneralSummary();
+        } catch (err) {
+          statusDiv.className = "text-sm font-bold text-red-600";
+          statusDiv.innerText = `Error: ${err.message}`;
+        }
+      };
+      reader.readAsText(file, 'ISO-8859-1');
+    }
+
+    async function clearCurrentDayData() {
+      if (!confirm("¿Estás seguro de borrar las rutas del día?")) return;
+
+      const snapshot = await db.collection('routes').get();
+      const batch = db.batch();
+      snapshot.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+
+      await db.collection('meta').doc('active_file').delete();
+
+      document.getElementById('selectAdminRoute').innerHTML = '<option value="">-- Todas las Rutas (Vista General) --</option>';
+      document.getElementById('routeKeysList').innerHTML = '<span class="text-gray-400 font-normal">Carga un CSV para generar las claves de cada chofer...</span>';
+      
+      Object.keys(adminMapMarkers).forEach(k => adminMap.removeLayer(adminMapMarkers[k]));
+      adminMapMarkers = {};
+
+      alert("✅ Datos eliminados correctamente.");
+    }
+
+    async function loadDriverRoute() {
+      let inputCode = document.getElementById('inputRouteCode').value.trim();
+      let inputPin = document.getElementById('inputRoutePin').value.trim();
+
+      if (!inputCode) return alert("Ingresa tu código de ruta.");
+      if (!inputPin) return alert("Ingresa tu clave de acceso (PIN).");
+
+      let docRef = db.collection('routes').doc(inputCode);
+      let docSnap = await docRef.get();
+
+      if (!docSnap.exists) {
+        const altCode = inputCode.startsWith('T') ? inputCode.replace(/^T/i, '') : 'T' + inputCode;
+        docRef = db.collection('routes').doc(altCode);
+        docSnap = await docRef.get();
+      }
+
+      if (!docSnap.exists) {
+        return alert(`❌ La ruta #${inputCode} no existe en el sistema.`);
+      }
+
+      const routeData = docSnap.data();
+
+      if (routeData.pin && routeData.pin !== inputPin) {
+        return alert("🔒 Clave de acceso incorrecta para esta ruta.");
+      }
+
+      if (document.getElementById('chkRememberDriver').checked) {
+        localStorage.setItem('courier_driver_code', inputCode);
+        localStorage.setItem('courier_driver_pin', inputPin);
+      } else {
+        localStorage.removeItem('courier_driver_code');
+        localStorage.removeItem('courier_driver_pin');
+      }
+
+      currentDocId = docRef.id;
+      currentRouteCode = routeData.code || inputCode;
+
+      driverMapInitialFit = false;
+
+      document.getElementById('driverLoginCard').classList.add('hidden');
+      document.getElementById('driverRouteContainer').classList.remove('hidden');
+      document.getElementById('driverRouteTitle').innerText = `Ruta #${currentRouteCode}`;
+
+      if (!driverMap) {
+        driverMap = L.map('driverMap', { preferCanvas: true, markerZoomAnimation: false }).setView([-16.3988, -71.5350], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(driverMap);
+      }
+      setTimeout(() => driverMap.invalidateSize(), 150);
+
+      if (driverUnsubscribe) driverUnsubscribe();
+
+      driverUnsubscribe = db.collection('routes').doc(currentDocId).onSnapshot(doc => {
+        if (doc.exists) {
+          currentClientsData = doc.data().clients || [];
+          updateDriverSummaryStats(currentClientsData);
+          populateVendorFilterDropdown(currentClientsData);
+          applyDriverFilters();
+        }
+      });
+
+      startGPSTrackingAuto();
+    }
+
+    function logoutDriverSession() {
+      localStorage.removeItem('courier_driver_code');
+      localStorage.removeItem('courier_driver_pin');
+      if (gpsWatchId !== null) navigator.geolocation.clearWatch(gpsWatchId);
+      if (driverUnsubscribe) driverUnsubscribe();
+
+      if (driverSelfMarker && driverMap) {
+        driverMap.removeLayer(driverSelfMarker);
+        driverSelfMarker = null;
+      }
+
+      document.getElementById('inputRouteCode').value = '';
+      document.getElementById('inputRoutePin').value = '';
+      document.getElementById('driverRouteContainer').classList.add('hidden');
+      document.getElementById('driverLoginCard').classList.remove('hidden');
+    }
+
+    // TRANSMISIÓN GPS EN TIEMPO REAL AL ADMIN + PUNTO AZUL EN SU PROPIO MAPA
+    function startGPSTrackingAuto() {
+      if (!navigator.geolocation) return;
+
+      if (gpsWatchId !== null) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+      }
+
+      gpsWatchId = navigator.geolocation.watchPosition(
+        pos => {
+          const lat = pos.coords.latitude;
+          const lng = pos.coords.longitude;
+
+          // 1. MOSTRAR PUNTO AZUL EN EL MAPA DEL CHOFER
+          if (driverMap) {
+            const selfIcon = L.divIcon({
+              className: 'custom-map-marker',
+              html: `<div class="driver-self-marker" title="Tu ubicación actual"></div>`,
+              iconSize: [16, 16],
+              iconAnchor: [8, 8]
+            });
+
+            if (!driverSelfMarker) {
+              driverSelfMarker = L.marker([lat, lng], { icon: selfIcon, zIndexOffset: 1000 }).addTo(driverMap);
+              driverSelfMarker.bindPopup("<b>📍 Tu ubicación actual (En vivo)</b>");
+            } else {
+              driverSelfMarker.setLatLng([lat, lng]);
+            }
+          }
+
+          // 2. TRANSMITIR UBICACIÓN AL ADMINISTRADOR (CADA 3 SEGUNDOS)
+          const now = Date.now();
+          if (now - lastGpsSentTime < 3000) return;
+          lastGpsSentTime = now;
+
+          const payload = {
+            code: currentRouteCode,
+            lat: lat,
+            lng: lng,
+            timestamp: now,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+          };
+
+          db.collection('tracking').doc(currentDocId).set(payload);
+          if (currentRouteCode !== currentDocId) {
+            db.collection('tracking').doc(currentRouteCode).set(payload);
+          }
+
+          const altCode = currentRouteCode.startsWith('T') ? currentRouteCode.replace(/^T/i, '') : 'T' + currentRouteCode;
+          db.collection('tracking').doc(altCode).set(payload);
+        },
+        err => { console.warn("GPS Warning: ", err.message); },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
+
+    function updateDriverSummaryStats(clients) {
+      const stats = calculateStats(clients);
+
+      document.getElementById('driverCountPendiente').innerText = stats.pendientes;
+      document.getElementById('driverCountEntregado').innerText = stats.entregados;
+      document.getElementById('driverCountCerrado').innerText = stats.cerrados;
+      document.getElementById('driverCountParcial').innerText = stats.parciales;
+      document.getElementById('driverCountOtro').innerText = stats.otros;
+      document.getElementById('driverCountRepaso').innerText = stats.repasos;
+
+      document.getElementById('driverProgressPct').innerText = `${stats.pctAvance}% completado`;
+      document.getElementById('driverProgressBarFill').style.width = `${stats.pctAvance}%`;
+      document.getElementById('driverCompletedCount').innerText = `Visitados / Atendidos: ${stats.atendidos} de ${stats.total}`;
+      document.getElementById('driverRemainingCount').innerText = `Falta por visitar (Gris): ${stats.pendientes} (${stats.pctFalta}%)`;
+    }
+
+    function updateAdminSummaryStats(clients, label) {
+      const stats = calculateStats(clients);
+
+      document.getElementById('adminScopeLabel').innerText = label ? `(${label})` : '(General Día)';
+      document.getElementById('adminTableScope').innerText = label ? `(${label})` : '(General Día)';
+      document.getElementById('adminCountPendiente').innerText = stats.pendientes;
+      document.getElementById('adminCountEntregado').innerText = stats.entregados;
+      document.getElementById('adminCountCerrado').innerText = stats.cerrados;
+      document.getElementById('adminCountParcial').innerText = stats.parciales;
+      document.getElementById('adminCountOtro').innerText = stats.otros;
+      document.getElementById('adminCountRepaso').innerText = stats.repasos;
+
+      document.getElementById('adminProgressPct').innerText = `${stats.pctAvance}% completado`;
+      document.getElementById('adminProgressBarFill').style.width = `${stats.pctAvance}%`;
+      document.getElementById('adminCompletedCount').innerText = `Visitados / Atendidos: ${stats.atendidos} de ${stats.total}`;
+      document.getElementById('adminRemainingCount').innerText = `Falta por visitar (Gris): ${stats.pendientes} (${stats.pctFalta}%)`;
+    }
+
+    function calculateStats(clients) {
+      const total = clients.length;
+      let pendientes = 0, entregados = 0, cerrados = 0, parciales = 0, otros = 0, repasos = 0;
+
+      clients.forEach(c => {
+        const st = c.estado || 'PENDIENTE';
+        if (st === 'PENDIENTE') pendientes++;
+        else if (st === 'ENTREGADO') entregados++;
+        else if (st === 'CERRADO') cerrados++;
+        else if (st === 'PARCIAL') parciales++;
+        else if (st === 'OTRO MOTIVO') otros++;
+        else if (st === 'REPASO') repasos++;
+        else pendientes++;
+      });
+
+      const atendidos = total - pendientes;
+      const pctAvance = total > 0 ? Math.round((atendidos / total) * 100) : 0;
+      const pctFalta = 100 - pctAvance;
+
+      return { total, pendientes, entregados, cerrados, parciales, otros, repasos, atendidos, pctAvance, pctFalta };
+    }
+
+    function populateVendorFilterDropdown(clients) {
+      const select = document.getElementById('driverVendorFilter');
+      const currentValue = select.value;
+      
+      const vendors = new Set();
+      clients.forEach(c => { if (c.vendedor) vendors.add(c.vendedor); });
+
+      select.innerHTML = '<option value="">-- Todos los Vendedores --</option>';
+      Array.from(vendors).sort().forEach(v => {
+        const option = document.createElement('option');
+        option.value = v;
+        option.innerText = `Vendedor ${v}`;
+        select.appendChild(option);
+      });
+
+      select.value = currentValue;
+    }
+
+    function applyDriverFilters() {
+      const searchText = document.getElementById('driverSearchInput').value.toLowerCase().trim();
+      const selectedVendor = document.getElementById('driverVendorFilter').value;
+
+      const filtered = currentClientsData.filter(c => {
+        const matchVendor = !selectedVendor || c.vendedor.toString() === selectedVendor;
+        const matchSearch = !searchText || 
+          c.name.toLowerCase().includes(searchText) || 
+          c.domicilio.toLowerCase().includes(searchText) || 
+          c.sec.toString().includes(searchText) ||
+          (c.telefono && c.telefono.includes(searchText));
+        
+        return matchVendor && matchSearch;
+      });
+
+      renderDriverClientsAndMap(filtered);
+    }
+
+    function renderDriverClientsAndMap(clientsToRender) {
+      const listContainer = document.getElementById('driverClientsList');
+      listContainer.innerHTML = '';
+
+      const bounds = [];
+      const currentKeys = new Set();
+
+      document.getElementById('driverResultsCount').innerText = `${clientsToRender.length} de ${currentClientsData.length} clientes`;
+
+      clientsToRender.forEach((c) => {
+        const originalIndex = currentClientsData.findIndex(item => item.sec === c.sec && item.name === c.name);
+        const uniqueKey = `driver_${c.sec}_${c.name}`;
+        currentKeys.add(uniqueKey);
+
+        let statusKey = c.estado || 'PENDIENTE';
+        let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+
+        let repasoHtml = '';
+        if (statusKey === 'REPASO') {
+          let aptoClass = c.repasoConfirm === 'APTO' ? 'bg-emerald-600 text-white' : 'bg-gray-200 text-gray-700';
+          let noAptoClass = c.repasoConfirm === 'NO APTO' ? 'bg-rose-600 text-white' : 'bg-gray-200 text-gray-700';
+
+          repasoHtml = `
+            <div class="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-lg flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-bold text-blue-900"><i class="fa-solid fa-rotate-right"></i> ¿Repaso Confirmado?:</span>
+              <div class="flex gap-1">
+                <button onclick="updateRepasoConfirm(${originalIndex}, 'APTO')" class="px-2.5 py-1 text-xs font-extrabold rounded shadow-sm transition ${aptoClass}">
+                  👍 APTO
+                </button>
+                <button onclick="updateRepasoConfirm(${originalIndex}, 'NO APTO')" class="px-2.5 py-1 text-xs font-extrabold rounded shadow-sm transition ${noAptoClass}">
+                  👎 NO APTO
+                </button>
+              </div>
+            </div>
+          `;
+        }
+
+        const card = document.createElement('div');
+        card.className = "border rounded-xl p-4 bg-gray-50 space-y-2 shadow-sm";
+        card.innerHTML = `
+          <div class="flex justify-between items-start">
+            <span class="font-bold text-indigo-700 text-sm">#${c.sec} · ${c.name}</span>
+            <span class="status-badge ${badgeClass}">${statusKey} ${c.repasoConfirm ? ' (' + c.repasoConfirm + ')' : ''}</span>
+          </div>
+          <p class="text-xs text-gray-600"><i class="fa-solid fa-location-dot text-red-500"></i> ${c.domicilio}</p>
+          <p class="text-xs text-gray-500"><i class="fa-solid fa-user-tag text-indigo-500"></i> Vend: ${c.vendedor || 'S/V'} | ${c.telefono || 'Sin tel'} | S/ ${c.subtotal}</p>
+
+          ${repasoHtml}
+
+          <div class="flex flex-wrap gap-2 pt-2 border-t items-center">
+            <a href="https://waze.com/ul?ll=${c.lat},${c.lon}&navigate=yes" target="_blank" class="px-2.5 py-1 text-xs font-bold bg-sky-500 text-white rounded hover:bg-sky-600">
+              <i class="fa-brands fa-waze"></i> Waze
+            </a>
+            <a href="https://www.google.com/maps/dir/?api=1&destination=${c.lat},${c.lon}" target="_blank" class="px-2.5 py-1 text-xs font-bold bg-emerald-600 text-white rounded hover:bg-emerald-700">
+              <i class="fa-solid fa-map-pin"></i> Maps
+            </a>
+            <select onchange="updateClientStatus(${originalIndex}, this.value)" class="ml-auto text-xs font-bold border rounded px-2 py-1 bg-white outline-none">
+              <option value="PENDIENTE" ${statusKey === 'PENDIENTE' ? 'selected' : ''}>⏳ PENDIENTE</option>
+              <option value="ENTREGADO" ${statusKey === 'ENTREGADO' ? 'selected' : ''}>✅ ENTREGADO</option>
+              <option value="CERRADO" ${statusKey === 'CERRADO' ? 'selected' : ''}>❌ CERRADO</option>
+              <option value="PARCIAL" ${statusKey === 'PARCIAL' ? 'selected' : ''}>🟧 PARCIAL</option>
+              <option value="OTRO MOTIVO" ${statusKey === 'OTRO MOTIVO' ? 'selected' : ''}>🟣 OTRO MOTIVO</option>
+              <option value="REPASO" ${statusKey === 'REPASO' ? 'selected' : ''}>🔵 REPASO</option>
+            </select>
+          </div>
+        `;
+        listContainer.appendChild(card);
+
+        if (c.lat && c.lon) {
+          const markerIcon = createCustomMarkerIcon(c.sec, statusKey, true);
+          
+          if (!driverMapMarkers[uniqueKey]) {
+            const marker = L.marker([c.lat, c.lon], { icon: markerIcon }).addTo(driverMap);
+            marker.bindPopup(`
+              <div class="space-y-1">
+                <b>${c.sec} · ${c.name}</b><br>
+                <span class="text-xs text-gray-600">${c.domicilio}</span><br>
+                <div class="pt-1">
+                  <label class="text-xs font-bold">Cambiar Estado:</label>
+                  <select onchange="updateClientStatus(${originalIndex}, this.value)" class="text-xs font-bold border rounded p-1 w-full mt-1">
+                    <option value="PENDIENTE" ${statusKey === 'PENDIENTE' ? 'selected' : ''}>⏳ PENDIENTE</option>
+                    <option value="ENTREGADO" ${statusKey === 'ENTREGADO' ? 'selected' : ''}>✅ ENTREGADO</option>
+                    <option value="CERRADO" ${statusKey === 'CERRADO' ? 'selected' : ''}>❌ CERRADO</option>
+                    <option value="PARCIAL" ${statusKey === 'PARCIAL' ? 'selected' : ''}>🟧 PARCIAL</option>
+                    <option value="OTRO MOTIVO" ${statusKey === 'OTRO MOTIVO' ? 'selected' : ''}>🟣 OTRO MOTIVO</option>
+                    <option value="REPASO" ${statusKey === 'REPASO' ? 'selected' : ''}>🔵 REPASO</option>
+                  </select>
+                </div>
+              </div>
+            `);
+            driverMapMarkers[uniqueKey] = marker;
+          } else {
+            driverMapMarkers[uniqueKey].setIcon(markerIcon);
+          }
+
+          bounds.push([c.lat, c.lon]);
+        }
+      });
+
+      Object.keys(driverMapMarkers).forEach(k => {
+        if (!currentKeys.has(k)) {
+          driverMap.removeLayer(driverMapMarkers[k]);
+          delete driverMapMarkers[k];
+        }
+      });
+
+      if (bounds.length > 0 && !driverMapInitialFit) {
+        driverMap.fitBounds(bounds, { padding: [30, 30] });
+        driverMapInitialFit = true;
+      }
+    }
+
+    async function updateClientStatus(index, newStatus) {
+      if (!currentDocId || !currentClientsData[index]) return;
+
+      currentClientsData[index].estado = newStatus;
+      if (newStatus === 'ENTREGADO') {
+        currentClientsData[index].horaEntrega = new Date().toLocaleTimeString();
+      }
+
+      await db.collection('routes').doc(currentDocId).update({
+        clients: currentClientsData,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    async function updateRepasoConfirm(index, confirmValue) {
+      if (!currentDocId || !currentClientsData[index]) return;
+
+      currentClientsData[index].repasoConfirm = confirmValue;
+
+      await db.collection('routes').doc(currentDocId).update({
+        clients: currentClientsData,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    }
+
+    async function loadAvailableRoutesInSelect() {
+      const select = document.getElementById('selectAdminRoute');
+      const savedValue = select.value || localStorage.getItem('courier_admin_selected_route') || '';
+      const keysDiv = document.getElementById('routeKeysList');
+      select.innerHTML = '<option value="">-- Todas las Rutas (Vista General) --</option>';
+      keysDiv.innerHTML = '';
+
+      const snapshot = await db.collection('routes').get();
+      if (snapshot.empty) {
+        keysDiv.innerHTML = '<span class="text-gray-400 font-normal">Carga un CSV para generar las claves de cada chofer...</span>';
+        return;
+      }
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const routeId = doc.id;
+        const option = document.createElement('option');
+        option.value = routeId;
+        option.innerText = `Ruta #${routeId}`;
+        select.appendChild(option);
+
+        if (data.pin) {
+          keysDiv.innerHTML += `
+            <span class="bg-indigo-50 border border-indigo-200 text-indigo-800 px-3 py-1.5 rounded-lg shadow-sm">
+              Ruta <b>#${routeId}</b> 🔑 Clave: <u class="text-indigo-900 font-extrabold text-sm">${data.pin}</u>
+            </span>
+          `;
+        }
+      });
+
+      if (savedValue && select.querySelector(`option[value="${savedValue}"]`)) {
+        select.value = savedValue;
+      }
+    }
+
+    function renderAdminMapPoints(clients, showLabels = true) {
+      const bounds = [];
+      const currentKeys = new Set();
+
+      clients.forEach(c => {
+        if (!c.lat || !c.lon) return;
+
+        const uniqueKey = `admin_${c.tpt || 'R'}_${c.sec}_${c.name}`;
+        currentKeys.add(uniqueKey);
+
+        let statusKey = c.estado || 'PENDIENTE';
+        let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+
+        const icon = createCustomMarkerIcon(c.sec, statusKey, showLabels);
+
+        if (!adminMapMarkers[uniqueKey]) {
+          const marker = L.marker([c.lat, c.lon], { icon: icon }).addTo(adminMap);
+          marker.bindPopup(`
+            <b>Ruta: ${c.tpt || 'S/R'} | Sec: ${c.sec} · ${c.name}</b><br>
+            <span class="text-xs text-gray-600">${c.domicilio}</span><br>
+            <b>Vend:</b> ${c.vendedor || 'S/V'}<br>
+            <b>Estado:</b> <span class="status-badge ${badgeClass}">${statusKey} ${c.repasoConfirm ? '(' + c.repasoConfirm + ')' : ''}</span>
+          `);
+          adminMapMarkers[uniqueKey] = marker;
+        } else {
+          adminMapMarkers[uniqueKey].setIcon(icon);
+        }
+
+        bounds.push([c.lat, c.lon]);
+      });
+
+      Object.keys(adminMapMarkers).forEach(k => {
+        if (!currentKeys.has(k)) {
+          adminMap.removeLayer(adminMapMarkers[k]);
+          delete adminMapMarkers[k];
+        }
+      });
+
+      if (bounds.length > 0 && !adminMapInitialFit) {
+        adminMap.fitBounds(bounds, { padding: [30, 30] });
+        adminMapInitialFit = true;
+      }
+    }
+
+    function renderAdminClientsTable(clients) {
+      adminCurrentRawClients = clients;
+      applyAdminTableFilter();
+    }
+
+    function applyAdminTableFilter() {
+      const tbody = document.getElementById('adminClientsTableBody');
+      const searchText = document.getElementById('adminSearchInput').value.toLowerCase().trim();
+
+      const filtered = adminCurrentRawClients.filter(c => {
+        return !searchText || 
+          (c.tpt && c.tpt.toLowerCase().includes(searchText)) ||
+          (c.sec && c.sec.toString().includes(searchText)) ||
+          (c.name && c.name.toLowerCase().includes(searchText)) ||
+          (c.domicilio && c.domicilio.toLowerCase().includes(searchText));
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" class="text-center p-4 text-gray-400 font-semibold">No se encontraron clientes para la búsqueda.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = filtered.map(c => {
+        let statusKey = c.estado || 'PENDIENTE';
+        let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+
+        return `
+          <tr class="border-b hover:bg-gray-50 transition">
+            <td class="p-2 font-bold text-indigo-700">#${c.tpt || 'S/R'}</td>
+            <td class="p-2 font-extrabold text-gray-800">${c.sec}</td>
+            <td class="p-2 font-semibold">${c.name}</td>
+            <td class="p-2 text-gray-600 text-[11px]">${c.domicilio}</td>
+            <td class="p-2"><span class="status-badge ${badgeClass}">${statusKey} ${c.repasoConfirm ? '(' + c.repasoConfirm + ')' : ''}</span></td>
+            <td class="p-2 font-mono text-gray-500 text-[11px]">${c.horaEntrega || '---'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function loadAdminGeneralSummary() {
+      localStorage.setItem('courier_admin_selected_route', '');
+      if (adminRouteUnsubscribe) { adminRouteUnsubscribe(); adminRouteUnsubscribe = null; }
+      if (adminAllRoutesUnsubscribe) { adminAllRoutesUnsubscribe(); adminAllRoutesUnsubscribe = null; }
+
+      adminAllRoutesUnsubscribe = db.collection('routes').onSnapshot(snapshot => {
+        let allClients = [];
+        snapshot.forEach(doc => {
+          const clients = doc.data().clients || [];
+          allClients = allClients.concat(clients);
+        });
+
+        const selectedVal = document.getElementById('selectAdminRoute').value;
+        if (!selectedVal) {
+          updateAdminSummaryStats(allClients, "General Día");
+          renderAdminMapPoints(allClients, false);
+          renderAdminClientsTable(allClients);
+        }
+      });
+    }
+
+    function startAdminGlobalTracking() {
+      if (adminGlobalTrackingUnsubscribe) adminGlobalTrackingUnsubscribe();
+
+      adminGlobalTrackingUnsubscribe = db.collection('tracking').onSnapshot(snapshot => {
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (!data || !data.lat || !data.lng) return;
+
+          const routeCode = data.code || doc.id;
+
+          if (!allTruckMarkers[routeCode]) {
+            const truckIcon = L.divIcon({
+              html: `<div style="background:#4F46E5;color:white;padding:3px 7px;border-radius:10px;border:2px solid white;box-shadow:0 2px 6px rgba(0,0,0,0.4);font-size:10px;font-weight:bold;white-space:nowrap;display:flex;align-items:center;gap:3px;"><i class="fa-solid fa-truck"></i> ${routeCode}</div>`,
+              className: '',
+              iconSize: [50, 22]
+            });
+            allTruckMarkers[routeCode] = L.marker([data.lat, data.lng], { icon: truckIcon }).addTo(adminMap);
+          } else {
+            allTruckMarkers[routeCode].setLatLng([data.lat, data.lng]);
+          }
+        });
+      });
+    }
+
+    async function manualRefreshAdmin() {
+      const select = document.getElementById('selectAdminRoute');
+      const currentCode = select.value || localStorage.getItem('courier_admin_selected_route') || '';
+      
+      await loadAvailableRoutesInSelect();
+
+      if (currentCode && select.querySelector(`option[value="${currentCode}"]`)) {
+        select.value = currentCode;
+        onAdminRouteSelect(false);
+      } else {
+        select.value = "";
+        loadAdminGeneralSummary();
+      }
+    }
+
+    function onAdminRouteSelect(resetBounds = true) {
+      const code = document.getElementById('selectAdminRoute').value;
+      localStorage.setItem('courier_admin_selected_route', code);
+
+      if (resetBounds) {
+        adminMapInitialFit = false;
+      }
+
+      if (!code) {
+        loadAdminGeneralSummary();
+        return;
+      }
+
+      if (adminAllRoutesUnsubscribe) { adminAllRoutesUnsubscribe(); adminAllRoutesUnsubscribe = null; }
+      if (adminRouteUnsubscribe) { adminRouteUnsubscribe(); adminRouteUnsubscribe = null; }
+
+      adminRouteUnsubscribe = db.collection('routes').doc(code).onSnapshot(doc => {
+        if (!doc.exists) return;
+        const clients = doc.data().clients || [];
+
+        updateAdminSummaryStats(clients, `Ruta #${code}`);
+        renderAdminMapPoints(clients, true);
+        renderAdminClientsTable(clients);
+      });
+    }
+  </script>
+</body>
+</html>
