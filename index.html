@@ -283,16 +283,20 @@
         </div>
       </div>
 
-      <!-- MAPA MONITOREO ADMIN -->
+      <!-- MAPA MONITOREO ADMIN Y BOTÓN DE EXPORTACIÓN -->
       <div class="bg-white p-4 rounded-xl shadow space-y-3">
-        <div class="flex flex-col sm:flex-row justify-between items-center gap-3">
+        <div class="flex flex-col md:flex-row justify-between items-center gap-3">
           <div class="flex items-center gap-2">
             <h3 class="font-bold text-gray-800">Monitoreo General de Rutas</h3>
             <span class="text-[11px] font-extrabold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full flex items-center gap-1">
               <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> GPS Multicamión Activo
             </span>
           </div>
-          <div class="flex items-center gap-2 w-full sm:w-auto">
+          <div class="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <!-- BOTÓN EXPORTAR REPORTE EXCEL / CSV -->
+            <button onclick="exportAdminReportCSV()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-sm transition">
+              <i class="fa-solid fa-file-excel"></i> Exportar Reporte CSV
+            </button>
             <button onclick="manualRefreshAdmin()" class="px-3 py-1.5 bg-indigo-50 text-indigo-700 font-bold rounded-lg border border-indigo-200 text-xs hover:bg-indigo-100 flex items-center gap-1.5 shadow-sm">
               <i class="fa-solid fa-rotate"></i> Actualizar
             </button>
@@ -322,13 +326,14 @@
                 <th class="p-2">Sec</th>
                 <th class="p-2">Cliente / Razón Social</th>
                 <th class="p-2">Dirección</th>
+                <th class="p-2">Monto S/</th>
                 <th class="p-2">Estado / Motivo</th>
-                <th class="p-2">Evidencia</th>
+                <th class="p-2">Evidencias</th>
                 <th class="p-2">Hora Entrega</th>
               </tr>
             </thead>
             <tbody id="adminClientsTableBody">
-              <tr><td colspan="7" class="text-center p-4 text-gray-400">Cargando lista de clientes...</td></tr>
+              <tr><td colspan="8" class="text-center p-4 text-gray-400">Cargando lista de clientes...</td></tr>
             </tbody>
           </table>
         </div>
@@ -338,16 +343,14 @@
 
   </main>
 
-  <!-- MODAL VISUALIZADOR DE FOTO DE EVIDENCIA -->
+  <!-- MODAL GALERÍA VISUALIZADORA DE FOTOS DE EVIDENCIA -->
   <div id="photoModal" class="hidden fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl p-4 max-w-lg w-full space-y-3 shadow-2xl relative">
       <div class="flex justify-between items-center border-b pb-2">
-        <h3 id="photoModalTitle" class="font-bold text-gray-800 text-sm">Foto de Evidencia</h3>
+        <h3 id="photoModalTitle" class="font-bold text-gray-800 text-sm">Fotos de Evidencia</h3>
         <button onclick="closePhotoModal()" class="text-gray-500 hover:text-rose-600 font-bold text-lg px-2">✕</button>
       </div>
-      <div class="flex justify-center bg-gray-900 rounded-xl overflow-hidden max-h-[70vh]">
-        <img id="photoModalImg" src="" class="object-contain max-h-[70vh] w-full" alt="Evidencia">
-      </div>
+      <div id="photoGalleryContainer" class="space-y-3 overflow-y-auto max-h-[70vh]"></div>
       <p id="photoModalObs" class="text-xs font-semibold text-gray-700 bg-gray-50 p-2 rounded-lg border"></p>
     </div>
   </div>
@@ -591,7 +594,7 @@
           repasoConfirm: '',
           horaEntrega: '',
           obs: '',
-          photo: ''
+          photos: []
         });
       }
       return clients;
@@ -928,6 +931,7 @@
 
         let statusKey = c.estado || 'PENDIENTE';
         let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+        let clientPhotos = c.photos || (c.photo ? [c.photo] : []);
 
         let repasoHtml = '';
         if (statusKey === 'REPASO') {
@@ -961,7 +965,7 @@
 
           ${repasoHtml}
 
-          <!-- MOTIVO Y FOTO DE EVIDENCIA CON OPCIÓN DE BORRAR -->
+          <!-- MOTIVO Y MULTI FOTOS DE EVIDENCIA -->
           <div class="bg-white p-2.5 rounded-lg border space-y-2 mt-2">
             <div class="flex gap-2 items-center">
               <select id="obsSelect_${originalIndex}" onchange="updateClientObs(${originalIndex}, this.value)" class="w-full text-xs font-semibold border rounded-lg px-2 py-1 bg-gray-50 outline-none">
@@ -974,20 +978,27 @@
               </select>
             </div>
 
-            <div class="flex items-center justify-between gap-2 flex-wrap">
-              <label for="cameraInput_${originalIndex}" class="cursor-pointer px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition">
-                <i class="fa-solid fa-camera text-indigo-600"></i> ${c.photo ? '📷 Cambiar Foto' : '📷 Tomar Foto Boleta/Local'}
-              </label>
-              <input type="file" id="cameraInput_${originalIndex}" accept="image/*" capture="environment" onchange="uploadPhotoEvidence(${originalIndex}, this)" class="hidden">
-              
-              ${c.photo ? `
-                <div class="flex items-center gap-1">
-                  <button onclick="openPhotoModal('${c.photo}', '${c.name}', '${c.obs || ''}')" class="text-xs text-emerald-700 font-extrabold flex items-center gap-1 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">Ver Foto ✅</button>
-                  <button onclick="deletePhotoEvidence(${originalIndex})" class="text-xs text-rose-700 font-extrabold bg-rose-50 border border-rose-200 px-2 py-1 rounded-lg hover:bg-rose-100 flex items-center gap-1" title="Borrar foto">
-                    <i class="fa-solid fa-trash-can"></i> Borrar
-                  </button>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between gap-2 flex-wrap">
+                <label for="cameraInput_${originalIndex}" class="cursor-pointer px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-xs font-bold flex items-center gap-1.5 transition">
+                  <i class="fa-solid fa-camera text-indigo-600"></i> ${clientPhotos.length > 0 ? '📷 Agregar Otra Foto' : '📷 Tomar Foto Evidencia'}
+                </label>
+                <input type="file" id="cameraInput_${originalIndex}" accept="image/*" capture="environment" onchange="uploadPhotoEvidence(${originalIndex}, this)" class="hidden">
+                
+                <span class="text-xs font-bold text-gray-500">${clientPhotos.length} foto(s) subida(s)</span>
+              </div>
+
+              <!-- MINI GALERÍA DE FOTOS SUBIDAS CON BOTÓN PARA BORRAR CADA UNA -->
+              ${clientPhotos.length > 0 ? `
+                <div class="flex flex-wrap gap-2 pt-2 border-t">
+                  ${clientPhotos.map((imgSrc, pIdx) => `
+                    <div class="relative group">
+                      <img src="${imgSrc}" onclick="openPhotoModalByClientIndex(${originalIndex})" class="w-14 h-14 object-cover rounded-lg border border-indigo-300 shadow-sm cursor-pointer hover:opacity-80">
+                      <button onclick="deletePhotoEvidence(${originalIndex}, ${pIdx})" class="absolute -top-1.5 -right-1.5 bg-rose-600 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black shadow hover:bg-rose-700 transition" title="Borrar foto">✕</button>
+                    </div>
+                  `).join('')}
                 </div>
-              ` : '<span class="text-[10px] text-gray-400">Sin foto</span>'}
+              ` : ''}
             </div>
           </div>
 
@@ -1079,6 +1090,7 @@
       });
     }
 
+    // SUBIR MÚLTIPLES FOTOS CON COMPRESIÓN
     function uploadPhotoEvidence(index, input) {
       if (!input.files || !input.files[0]) return;
 
@@ -1106,7 +1118,10 @@
 
           const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
 
-          currentClientsData[index].photo = compressedBase64;
+          let photos = currentClientsData[index].photos || (currentClientsData[index].photo ? [currentClientsData[index].photo] : []);
+          photos.push(compressedBase64);
+          currentClientsData[index].photos = photos;
+          delete currentClientsData[index].photo;
 
           await db.collection('routes').doc(currentDocId).update({
             clients: currentClientsData,
@@ -1118,12 +1133,15 @@
       reader.readAsDataURL(file);
     }
 
-    // ELIMINAR FOTO DE EVIDENCIA
-    async function deletePhotoEvidence(index) {
+    // BORRAR FOTO ESPECÍFICA DE LA LISTA DE FOTOS
+    async function deletePhotoEvidence(index, photoIdx) {
       if (!currentDocId || !currentClientsData[index]) return;
-      if (!confirm("¿Estás seguro de borrar la foto de evidencia de este cliente?")) return;
+      if (!confirm("¿Estás seguro de borrar esta foto de evidencia?")) return;
 
-      currentClientsData[index].photo = '';
+      let photos = currentClientsData[index].photos || (currentClientsData[index].photo ? [currentClientsData[index].photo] : []);
+      photos.splice(photoIdx, 1);
+      currentClientsData[index].photos = photos;
+      delete currentClientsData[index].photo;
 
       await db.collection('routes').doc(currentDocId).update({
         clients: currentClientsData,
@@ -1131,10 +1149,28 @@
       });
     }
 
-    function openPhotoModal(imgSrc, title, obs) {
-      document.getElementById('photoModalImg').src = imgSrc;
-      document.getElementById('photoModalTitle').innerText = `Evidencia: ${title}`;
-      document.getElementById('photoModalObs').innerText = obs ? `Observación: ${obs}` : 'Sin observación registrada.';
+    function openPhotoModalByClientIndex(idx) {
+      const client = currentClientsData[idx];
+      if (client) showPhotoGalleryModal(client);
+    }
+
+    function showPhotoGalleryModal(client) {
+      const photos = client.photos || (client.photo ? [client.photo] : []);
+      const container = document.getElementById('photoGalleryContainer');
+      
+      if (photos.length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 text-center">No hay fotos de evidencia.</p>`;
+      } else {
+        container.innerHTML = photos.map((p, idx) => `
+          <div class="space-y-1">
+            <span class="text-xs font-bold text-gray-700 block">📷 Foto ${idx + 1} de ${photos.length}:</span>
+            <img src="${p}" class="w-full rounded-xl border border-gray-300 object-contain max-h-[50vh]">
+          </div>
+        `).join('');
+      }
+
+      document.getElementById('photoModalTitle').innerText = `Evidencias: ${client.name}`;
+      document.getElementById('photoModalObs').innerText = client.obs ? `Motivo / Obs: ${client.obs}` : 'Sin observación registrada.';
       document.getElementById('photoModal').classList.remove('hidden');
     }
 
@@ -1200,6 +1236,7 @@
 
         let statusKey = c.estado || 'PENDIENTE';
         let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+        let photoCount = c.photos ? c.photos.length : (c.photo ? 1 : 0);
 
         const icon = createCustomMarkerIcon(c.sec, statusKey, showLabels);
 
@@ -1208,10 +1245,10 @@
           marker.bindPopup(`
             <b>Ruta: ${c.tpt || 'S/R'} | Sec: ${c.sec} · ${c.name}</b><br>
             <span class="text-xs text-gray-600">${c.domicilio}</span><br>
-            <b>Vend:</b> ${c.vendedor || 'S/V'}<br>
+            <b>Monto:</b> S/ ${c.subtotal || '0.00'}<br>
             <b>Estado:</b> <span class="status-badge ${badgeClass}">${statusKey}</span><br>
             ${c.obs ? `<b>Motivo:</b> ${c.obs}<br>` : ''}
-            ${c.photo ? `<button onclick="openPhotoModal('${c.photo}', '${c.name}', '${c.obs || ''}')" class="mt-1 px-2 py-0.5 bg-indigo-600 text-white rounded text-[10px] font-bold">Ver Foto</button>` : ''}
+            ${photoCount > 0 ? `<button onclick="showPhotoGalleryModalByName('${c.sec}', '${c.name}')" class="mt-1 px-2 py-0.5 bg-indigo-600 text-white rounded text-[10px] font-bold">Ver ${photoCount} Foto(s)</button>` : ''}
           `);
           adminMapMarkers[uniqueKey] = marker;
         } else {
@@ -1234,6 +1271,11 @@
       }
     }
 
+    function showPhotoGalleryModalByName(sec, name) {
+      const client = adminCurrentRawClients.find(c => c.sec == sec && c.name == name);
+      if (client) showPhotoGalleryModal(client);
+    }
+
     function renderAdminClientsTable(clients) {
       adminCurrentRawClients = clients;
       applyAdminTableFilter();
@@ -1253,13 +1295,14 @@
       });
 
       if (filtered.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center p-4 text-gray-400 font-semibold">No se encontraron clientes para la búsqueda.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-center p-4 text-gray-400 font-semibold">No se encontraron clientes para la búsqueda.</td></tr>`;
         return;
       }
 
       tbody.innerHTML = filtered.map(c => {
         let statusKey = c.estado || 'PENDIENTE';
         let badgeClass = 'status-' + statusKey.replace(/\s+/g, '_');
+        let photoCount = c.photos ? c.photos.length : (c.photo ? 1 : 0);
 
         return `
           <tr class="border-b hover:bg-gray-50 transition">
@@ -1267,17 +1310,59 @@
             <td class="p-2 font-extrabold text-gray-800">${c.sec}</td>
             <td class="p-2 font-semibold">${c.name}</td>
             <td class="p-2 text-gray-600 text-[11px]">${c.domicilio}</td>
+            <td class="p-2 font-bold text-gray-800 text-[11px]">S/ ${c.subtotal || '0.00'}</td>
             <td class="p-2">
               <span class="status-badge ${badgeClass}">${statusKey} ${c.repasoConfirm ? '(' + c.repasoConfirm + ')' : ''}</span>
               ${c.obs ? `<div class="text-[10px] text-gray-500 font-bold mt-0.5">📌 ${c.obs}</div>` : ''}
             </td>
             <td class="p-2">
-              ${c.photo ? `<button onclick="openPhotoModal('${c.photo}', '${c.name}', '${c.obs || ''}')" class="px-2 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded text-[11px] font-bold flex items-center gap-1"><i class="fa-solid fa-image"></i> Ver Foto</button>` : '<span class="text-gray-400 text-[11px]">---</span>'}
+              ${photoCount > 0 ? `<button onclick="showPhotoGalleryModalByName('${c.sec}', '${c.name}')" class="px-2 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded text-[11px] font-bold flex items-center gap-1"><i class="fa-solid fa-images"></i> Ver ${photoCount} foto(s)</button>` : '<span class="text-gray-400 text-[11px]">---</span>'}
             </td>
             <td class="p-2 font-mono text-gray-500 text-[11px]">${c.horaEntrega || '---'}</td>
           </tr>
         `;
       }).join('');
+    }
+
+    // EXPORTACIÓN A EXCEL / CSV PARA ADMINISTRADOR
+    function exportAdminReportCSV() {
+      if (!adminCurrentRawClients || adminCurrentRawClients.length === 0) {
+        alert("No hay datos de clientes para exportar.");
+        return;
+      }
+
+      const selectedRoute = document.getElementById('selectAdminRoute').value;
+      const fileName = selectedRoute ? `Reporte_Ruta_${selectedRoute}.csv` : `Reporte_General_UltimaMilla.csv`;
+
+      // Encabezado UTF-8 para Excel
+      let csvContent = "\uFEFF";
+      csvContent += "Ruta;Secuencia;Cliente / Razon Social;Direccion;Vendedor;Monto S/;Estado;Motivo / Observacion;Fotos Evidencia;Hora Entrega\n";
+
+      adminCurrentRawClients.forEach(c => {
+        const photoCount = c.photos ? c.photos.length : (c.photo ? 1 : 0);
+        const row = [
+          `"${c.tpt || ''}"`,
+          `"${c.sec || ''}"`,
+          `"${(c.name || '').replace(/"/g, '""')}"`,
+          `"${(c.domicilio || '').replace(/"/g, '""')}"`,
+          `"${c.vendedor || ''}"`,
+          `"${c.subtotal || '0.00'}"`,
+          `"${c.estado || 'PENDIENTE'}"`,
+          `"${(c.obs || '').replace(/"/g, '""')}"`,
+          `"${photoCount} foto(s)"`,
+          `"${c.horaEntrega || ''}"`
+        ];
+        csvContent += row.join(";") + "\n";
+      });
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", fileName);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     }
 
     function loadAdminGeneralSummary() {
